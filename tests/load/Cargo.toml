@@ -1,0 +1,25 @@
+[package]
+name = "chainrail-load"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "chainrail-load"
+path = "src/main.rs"
+
+[dependencies]
+chainrail-common = { workspace = true, features = ["sqlx"] }
+chainrail-database.workspace = true
+chainrail-ledger.workspace = true
+chainrail-events.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+anyhow.workspace = true
+futures.workspace = true

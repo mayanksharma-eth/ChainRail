@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+.env
+.env.local
+*.log
+/data
+/infra/grafana/data
+.DS_Store
+/tests/load/results

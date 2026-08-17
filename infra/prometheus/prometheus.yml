@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+  external_labels:
+    system: chainrail
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: chainrail-api
+    static_configs:
+      - targets: ["api:9090"]
+        labels:
+          component: api
+
+  - job_name: chainrail-worker
+    static_configs:
+      - targets: ["worker:9091"]
+        labels:
+          component: worker
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

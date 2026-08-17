@@ -1,0 +1,251 @@
+{
+  "uid": "chainrail-overview",
+  "title": "ChainRail Overview",
+  "tags": ["chainrail"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "chain",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(chainrail_chain_head_height, chain)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Correctness (these must be zero)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Ledger integrity problems",
+      "description": "Unbalanced transactions, balance drift, or illegal negative balances. Any non-zero value is an emergency: the schema's triggers make these impossible under normal operation.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "max(chainrail_ledger_integrity_problems)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Credited deposits reversed by reorg (1h)",
+      "description": "A reorg deeper than the confirmation threshold invalidated a deposit whose funds were already spendable.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(chainrail_reorg_credited_reversals_total[1h])) or vector(0)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "User deficits booked (1h)",
+      "description": "Receivables created because a user had already withdrawn reversed funds. A realised loss.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(chainrail_ledger_deficits_total[1h])) or vector(0)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Dead-lettered events (1h)",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(chainrail_events_dead_lettered_total[1h])) or vector(0)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+
+    {
+      "type": "row",
+      "title": "Deposit pipeline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Watcher lag (blocks behind head)",
+      "description": "Deposits are not detected while this is high. Nothing becomes incorrect: the cursor only advances on durable writes.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "chainrail_watcher_lag_blocks{chain=~\"$chain\"}", "legendFormat": "{{chain}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "fillOpacity": 10 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Deposit throughput",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(rate(chainrail_blocks_processed_total{chain=~\"$chain\"}[5m]))", "legendFormat": "blocks/s", "refId": "A" },
+        { "expr": "sum(rate(chainrail_deposits_observed_total{chain=~\"$chain\"}[5m]))", "legendFormat": "observed/s", "refId": "B" },
+        { "expr": "sum(rate(chainrail_deposits_credited_total{chain=~\"$chain\"}[5m]))", "legendFormat": "credited/s", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reorgs and depth",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (chain) (increase(chainrail_reorgs_total{chain=~\"$chain\"}[15m]))", "legendFormat": "{{chain}} reorgs/15m", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(chainrail_reorg_depth_blocks_bucket[1h])))", "legendFormat": "p95 depth", "refId": "B" }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "Withdrawal pipeline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Withdrawals by outcome",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (result) (rate(chainrail_withdrawals_total[5m]))", "legendFormat": "{{result}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Withdrawal failures by reason",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (reason) (rate(chainrail_withdrawal_failures_total[5m]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Policy decisions",
+      "description": "Denials by rule. A spike in one code usually means a limit needs revisiting, not a bug.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (decision) (rate(chainrail_risk_decisions_total[5m]))", "legendFormat": "{{decision}}", "refId": "A" }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "Dependencies",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC latency (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, endpoint) (rate(chainrail_rpc_latency_seconds_bucket{chain=~\"$chain\"}[5m])))", "legendFormat": "p50 {{endpoint}}", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(chainrail_rpc_latency_seconds_bucket{chain=~\"$chain\"}[5m])))", "legendFormat": "p95 {{endpoint}}", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le, endpoint) (rate(chainrail_rpc_latency_seconds_bucket{chain=~\"$chain\"}[5m])))", "legendFormat": "p99 {{endpoint}}", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC endpoint health (1 = breaker closed)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "chainrail_rpc_endpoint_healthy{chain=~\"$chain\"}", "legendFormat": "{{chain}}/{{endpoint}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "custom": { "fillOpacity": 20 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox backlog and consumer lag",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(chainrail_outbox_pending)", "legendFormat": "outbox pending", "refId": "A" },
+        { "expr": "max(chainrail_outbox_oldest_pending_seconds)", "legendFormat": "oldest pending (s)", "refId": "B" },
+        { "expr": "sum by (consumer) (chainrail_kafka_consumer_lag)", "legendFormat": "lag {{consumer}}", "refId": "C" }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "API",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP latency by route (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(chainrail_http_request_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(chainrail_http_request_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(chainrail_http_request_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP requests by status",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (status) (rate(chainrail_http_requests_total[5m]))", "legendFormat": "{{status}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+[package]
+name = "chainrail-observability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chainrail-common.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+tokio.workspace = true

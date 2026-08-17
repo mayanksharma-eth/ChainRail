@@ -1,0 +1,15 @@
+[package]
+name = "chainrail-signer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chainrail-common.workspace = true
+alloy.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+hex.workspace = true
+serde.workspace = true

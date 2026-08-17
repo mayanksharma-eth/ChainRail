@@ -1,0 +1,20 @@
+[package]
+name = "chainrail-chains-evm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chainrail-common.workspace = true
+chainrail-rpc.workspace = true
+chainrail-signer.workspace = true
+chainrail-database.workspace = true
+alloy.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+hex.workspace = true

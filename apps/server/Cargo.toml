@@ -1,0 +1,33 @@
+[package]
+name = "chainrail-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chainrail-server"
+path = "src/main.rs"
+
+[dependencies]
+chainrail-common.workspace = true
+chainrail-database.workspace = true
+chainrail-ledger.workspace = true
+chainrail-events.workspace = true
+chainrail-risk.workspace = true
+chainrail-signer.workspace = true
+chainrail-rpc.workspace = true
+chainrail-chains-evm.workspace = true
+chainrail-deposits.workspace = true
+chainrail-withdrawals.workspace = true
+chainrail-observability.workspace = true
+chainrail-api.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+metrics.workspace = true
+reqwest.workspace = true

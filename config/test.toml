@@ -1,0 +1,24 @@
+# Test overrides. Loaded when APP_ENV=test.
+
+[observability]
+log_level = "warn"
+log_format = "pretty"
+trace_sample_ratio = 0.0
+
+[signer]
+# Deterministic, cryptographically invalid signatures. Tests assert on state
+# machines and accounting, not on signature validity.
+backend = "mock"
+
+[database]
+run_migrations_on_boot = true
+
+[kafka]
+# Empty brokers select the in-memory bus, so the suite needs no broker.
+brokers = ""
+use_outbox = true
+outbox_poll_interval_ms = 50
+
+[worker]
+tick_interval_ms = 50
+shutdown_grace_ms = 2000

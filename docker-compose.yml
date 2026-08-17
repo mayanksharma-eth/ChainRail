@@ -1,0 +1,165 @@
+name: chainrail
+
+x-app-env: &app-env
+  APP_ENV: local
+  CHAINRAIL_CONFIG_DIR: /app/config
+  CHAINRAIL__DATABASE__URL: postgres://chainrail:chainrail@postgres:5432/chainrail
+  CHAINRAIL__REDIS__URL: redis://redis:6379
+  CHAINRAIL__KAFKA__BROKERS: redpanda:9092
+  CHAINRAIL__OBSERVABILITY__LOG_FORMAT: json
+  CHAINRAIL__OBSERVABILITY__LOG_LEVEL: ${LOG_LEVEL:-info}
+  # Well-known Hardhat test key. Worthless, public, and only ever used against
+  # testnets -- see docs/threat-model.md#key-custody.
+  CHAINRAIL__SIGNER__BACKEND: local_development
+  CHAINRAIL__SIGNER__PRIVATE_KEY: ${DEV_SIGNER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+  RUST_BACKTRACE: "1"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: chainrail
+      POSTGRES_PASSWORD: chainrail
+      POSTGRES_DB: chainrail
+      # Deterministic sorting; avoids locale-dependent index behaviour.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - log_min_duration_statement=500
+    # High host ports by default: 5432/5433 are very often already taken by a
+    # local Postgres or another project's compose stack, and silently connecting
+    # to the wrong database is a nasty way to lose an hour. Override with
+    # POSTGRES_PORT if you prefer the conventional one.
+    ports: ["${POSTGRES_PORT:-55432}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates `chainrail_test` on first init so the test suite never truncates
+      # the application database out from under a running worker.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chainrail -d chainrail"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["${REDIS_PORT:-56379}:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redpanda:
+    image: redpandadata/redpanda:v24.3.6
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "${REDPANDA_PORT:-19092}:19092"
+      - "${REDPANDA_ADMIN_PORT:-19644}:9644"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Creates topics up front so consumers do not race auto-creation and end up
+  # with the wrong partition count.
+  redpanda-init:
+    image: redpandadata/redpanda:v24.3.6
+    depends_on:
+      redpanda: {condition: service_healthy}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for t in chain.blocks deposits.observed deposits.confirmed deposits.credited \
+                 withdrawals.requested withdrawals.broadcast withdrawals.completed system.dead-letter; do
+          rpk topic create "$$t" --brokers redpanda:9092 -p 6 -r 1 || true
+        done
+        rpk topic list --brokers redpanda:9092
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: runtime
+    command: ["/usr/local/bin/chainrail-server"]
+    environment:
+      <<: *app-env
+    ports:
+      - "${API_PORT:-8088}:8080"
+      - "${API_METRICS_PORT:-9090}:9090"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+    volumes:
+      - ./config:/app/config:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/chainrail-server", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: runtime
+    command: ["/usr/local/bin/chainrail-worker"]
+    environment:
+      <<: *app-env
+      CHAINRAIL__OBSERVABILITY__METRICS_BIND: 0.0.0.0:9091
+      # The API already ran migrations; the worker must not race it.
+      CHAINRAIL__DATABASE__RUN_MIGRATIONS_ON_BOOT: "false"
+    ports:
+      - "${WORKER_METRICS_PORT:-9091}:9091"
+    depends_on:
+      api: {condition: service_started}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+    volumes:
+      - ./config:/app/config:ro
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    ports: ["${PROMETHEUS_PORT:-9095}:9090"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    ports: ["${GRAFANA_PORT:-3001}:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:

@@ -1,0 +1,17 @@
+[package]
+name = "chainrail-ledger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chainrail-common.workspace = true
+chainrail-database.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+metrics.workspace = true

@@ -1,0 +1,25 @@
+# Local development overrides. Loaded when APP_ENV=local (the default).
+
+[observability]
+log_level = "info,chainrail_rpc=debug,chainrail_deposits=debug,sqlx=warn"
+# Human-readable locally; JSON is enforced everywhere else by config validation.
+log_format = "pretty"
+trace_sample_ratio = 1.0
+
+[signer]
+# Hardhat account #0: a well-known, published, worthless key. Fine on a testnet,
+# and `validate()` will refuse to start a production-like environment with it.
+backend = "local_development"
+private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+[risk]
+# Lower thresholds locally so the manual-approval path is easy to exercise.
+maintenance_mode = false
+
+[risk.manual_approval_threshold]
+USDC = "50000000"      # 50 USDC
+
+[http]
+# Effectively off for local load testing; the real backstop is at the edge.
+rate_limit_rps = 5000
+rate_limit_burst = 10000

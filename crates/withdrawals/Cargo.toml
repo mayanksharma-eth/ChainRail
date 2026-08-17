@@ -1,0 +1,26 @@
+[package]
+name = "chainrail-withdrawals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+chainrail-common.workspace = true
+chainrail-database.workspace = true
+chainrail-ledger.workspace = true
+chainrail-events.workspace = true
+chainrail-risk.workspace = true
+chainrail-signer.workspace = true
+chainrail-chains-evm.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+hex.workspace = true

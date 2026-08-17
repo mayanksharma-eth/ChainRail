@@ -1,0 +1,243 @@
+# Kubernetes manifests for ChainRail.
+#
+# Scope: the two ChainRail workloads. Postgres, Kafka and Redis are assumed to be
+# managed services or separately-operated StatefulSets -- running a production
+# database from a hand-written manifest is not something to demonstrate casually.
+#
+# These are illustrative of the deployment *shape*, not a hardened production
+# config. They have been validated as YAML but not applied to a live cluster.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chainrail
+---
+# Non-secret configuration. Mounted as a file so it layers the same way as local
+# development (default.toml -> {env}.toml -> env vars).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chainrail-config
+  namespace: chainrail
+data:
+  APP_ENV: "staging"
+  CHAINRAIL_CONFIG_DIR: "/app/config"
+  CHAINRAIL__OBSERVABILITY__LOG_FORMAT: "json"
+  CHAINRAIL__OBSERVABILITY__LOG_LEVEL: "info"
+---
+# Secrets are referenced, never defined here. Populate from External Secrets
+# Operator, Vault Agent Injector, or your cloud's secret manager.
+#
+# NOTE: `signer.private_key` intentionally has no production counterpart.
+# ChainRail refuses to boot a non-local environment with a development signer, so
+# a real deployment must first implement a KMS/HSM/MPC signer backend. See
+# docs/threat-model.md#1-compromised-signer--key-custody.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: chainrail-secrets
+  namespace: chainrail
+type: Opaque
+stringData:
+  CHAINRAIL__DATABASE__URL: "postgres://chainrail_app:REPLACE_ME@postgres:5432/chainrail"
+  CHAINRAIL__REDIS__URL: "redis://redis:6379"
+  CHAINRAIL__KAFKA__BROKERS: "kafka:9092"
+  CHAINRAIL__HTTP__API_TOKEN: "REPLACE_ME"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chainrail-api
+  namespace: chainrail
+  labels: { app: chainrail, component: api }
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: chainrail, component: api }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: chainrail, component: api }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      # Only the API runs migrations; the worker has them disabled so the two
+      # cannot race on deploy.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: chainrail:0.1.0
+          command: ["/usr/local/bin/chainrail-server"]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
+          envFrom:
+            - configMapRef: { name: chainrail-config }
+            - secretRef: { name: chainrail-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "2", memory: "1Gi" }
+          # Liveness probes /health (process is up); readiness probes /ready,
+          # which fails only when Postgres is unreachable. An RPC or Kafka outage
+          # must not pull every pod out of service.
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 3
+            failureThreshold: 30
+          volumeMounts:
+            - { name: config, mountPath: /app/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: chainrail-config-files, optional: true }
+      # Long enough for in-flight requests to drain; the process handles SIGTERM
+      # and stops accepting while finishing what it has.
+      terminationGracePeriodSeconds: 45
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chainrail-api
+  namespace: chainrail
+spec:
+  selector: { app: chainrail, component: api }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: metrics, port: 9090, targetPort: metrics }
+---
+# The worker is a Deployment rather than a StatefulSet: it holds no local state,
+# and replicas partition work between themselves via FOR UPDATE SKIP LOCKED and
+# Kafka consumer groups, with no coordination service.
+#
+# CAVEAT: two replicas both watching the SAME chain is safe but wasteful -- both
+# scan identical ranges and one loses every insert to the unique constraint. To
+# scale past one, partition by chain: one Deployment per chain with
+# CHAINRAIL__WORKER__RUN_WATCHER enabled only there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chainrail-worker
+  namespace: chainrail
+  labels: { app: chainrail, component: worker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: chainrail, component: worker }
+  strategy:
+    # Recreate, not RollingUpdate: avoids two watchers overlapping during a deploy.
+    type: Recreate
+  template:
+    metadata:
+      labels: { app: chainrail, component: worker }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: chainrail:0.1.0
+          command: ["/usr/local/bin/chainrail-worker"]
+          ports:
+            - { name: metrics, containerPort: 9091 }
+          env:
+            - { name: CHAINRAIL__OBSERVABILITY__METRICS_BIND, value: "0.0.0.0:9091" }
+            # The API owns migrations.
+            - { name: CHAINRAIL__DATABASE__RUN_MIGRATIONS_ON_BOOT, value: "false" }
+          envFrom:
+            - configMapRef: { name: chainrail-config }
+            - secretRef: { name: chainrail-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "2", memory: "1Gi" }
+          volumeMounts:
+            - { name: config, mountPath: /app/config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: chainrail-config-files, optional: true }
+      # Generous: lets an in-flight withdrawal broadcast finish recording rather
+      # than being reconciled on the next start.
+      terminationGracePeriodSeconds: 60
+---
+# Deny-by-default egress. A process that signs transactions should reach only
+# what it needs; unrestricted egress is a convenient exfiltration path.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chainrail-egress
+  namespace: chainrail
+spec:
+  podSelector:
+    matchLabels: { app: chainrail }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {}
+    # DNS
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # HTTPS to RPC providers. Narrow this to the providers' address ranges where
+    # they publish them.
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chainrail-api
+  namespace: chainrail
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: chainrail, component: api }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chainrail-api
+  namespace: chainrail
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chainrail-api
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      # Slow scale-down: the API is bound by database connections, and flapping
+      # replicas churn the pool.
+      stabilizationWindowSeconds: 300

@@ -1,0 +1,32 @@
+[package]
+name = "chainrail-integration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chainrail-common = { workspace = true, features = ["sqlx"] }
+chainrail-database.workspace = true
+chainrail-ledger.workspace = true
+chainrail-events.workspace = true
+chainrail-rpc.workspace = true
+chainrail-signer.workspace = true
+chainrail-chains-evm.workspace = true
+chainrail-deposits.workspace = true
+chainrail-withdrawals.workspace = true
+chainrail-risk.workspace = true
+chainrail-api.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"

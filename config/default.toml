@@ -1,0 +1,148 @@
+# ChainRail defaults. Committed, and therefore contains NO secrets.
+#
+# Secrets (database URL, signer key, API token) come from the environment with
+# the `CHAINRAIL__` prefix and `__` as the nesting separator, e.g.
+#   CHAINRAIL__DATABASE__URL=postgres://...
+#   CHAINRAIL__SIGNER__PRIVATE_KEY=0x...
+#
+# Layering: default.toml -> {APP_ENV}.toml -> environment variables.
+
+service_name = "chainrail"
+
+[http]
+bind = "0.0.0.0:8080"
+request_timeout_ms = 30000
+# 64 KiB is generous for the largest request body here (a withdrawal); a bigger
+# limit only buys an attacker cheaper memory pressure.
+max_body_bytes = 65536
+rate_limit_rps = 200
+rate_limit_burst = 400
+default_page_size = 50
+max_page_size = 200
+
+[database]
+url = "postgres://chainrail:chainrail@127.0.0.1:55432/chainrail"
+max_connections = 20
+min_connections = 2
+acquire_timeout_ms = 10000
+statement_timeout_ms = 30000
+run_migrations_on_boot = true
+
+[redis]
+url = "redis://127.0.0.1:56379"
+timeout_ms = 2000
+# Redis is an availability dependency only: with it down, caches miss and
+# advisory locks fall back to database locking. Nothing becomes incorrect.
+required = false
+
+[kafka]
+brokers = "127.0.0.1:19092"
+consumer_group = "chainrail"
+topic_prefix = ""
+request_timeout_ms = 5000
+max_delivery_attempts = 5
+retry_backoff_base_ms = 500
+retry_backoff_max_ms = 30000
+use_outbox = true
+outbox_poll_interval_ms = 1000
+outbox_batch_size = 200
+
+[observability]
+log_level = "info"
+log_format = "json"
+trace_sample_ratio = 0.1
+metrics_bind = "0.0.0.0:9090"
+# otlp_endpoint = "http://localhost:4317"
+
+[signer]
+# Development only. `AppConfig::validate` refuses to boot any environment other
+# than local/test/ci with this backend. See docs/threat-model.md#key-custody.
+backend = "mock"
+
+[risk]
+maintenance_mode = false
+max_withdrawals_per_user_per_day = 50
+
+# Limits are keyed by "SYMBOL" (all chains) or "chain:SYMBOL" (that chain only);
+# the chain-specific key wins. Values are raw units.
+[risk.min_per_request]
+USDC = "1000"          # 0.001 USDC
+
+[risk.max_per_request]
+USDC = "100000000000"  # 100,000 USDC
+
+[risk.max_per_user_per_day]
+USDC = "500000000000"  # 500,000 USDC
+
+[risk.manual_approval_threshold]
+USDC = "10000000000"   # 10,000 USDC -- above this, an operator must approve
+
+[worker]
+run_watcher = true
+run_confirmations = true
+run_deposit_consumer = true
+run_withdrawal_pipeline = true
+run_outbox_relay = true
+tick_interval_ms = 2000
+shutdown_grace_ms = 30000
+
+# --- chains ---------------------------------------------------------------
+#
+# Adding an EVM network is a config change, not a code change.
+
+[[chains]]
+id = "base-sepolia"
+kind = "evm"
+# EIP-155 chain id. Required: it is bound into every signature, and the watcher
+# refuses to start if the RPC disagrees.
+numeric_chain_id = 84532
+poll_interval_ms = 2000
+block_batch_size = 25
+# Must exceed the confirmation requirement, or a reorg deep enough to invalidate
+# a credited deposit could not be detected. Enforced by config validation.
+reorg_scan_depth = 64
+transfer_gas_limit = 120000
+# +25% headroom on the base fee so a rise between estimation and inclusion does
+# not strand the transaction.
+fee_bump_pct = 125
+# Hardhat account #0 -- a public, worthless test key. Never a real wallet.
+hot_wallet_address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+[chains.finality]
+mode = "confirmations"
+blocks = 10
+
+[[chains.rpc]]
+name = "base-public"
+url = "https://sepolia.base.org"
+weight = 100
+timeout_ms = 8000
+max_inflight = 16
+failure_threshold = 5
+breaker_reset_ms = 15000
+
+# A second endpoint makes failover real rather than theoretical. Add more (and
+# raise the weight on the paid one) in any environment that matters.
+[[chains.rpc]]
+name = "base-public-alt"
+url = "https://base-sepolia-rpc.publicnode.com"
+weight = 50
+timeout_ms = 8000
+max_inflight = 16
+failure_threshold = 5
+breaker_reset_ms = 15000
+
+[[chains.assets]]
+symbol = "USDC"
+decimals = 6
+contract_address = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+deposits_enabled = true
+withdrawals_enabled = true
+
+[[chains.assets]]
+symbol = "ETH"
+decimals = 18
+# No contract_address == the chain's native asset. Needed for gas accounting
+# even though native deposit detection is not implemented in v0.1.
+deposits_enabled = false
+withdrawals_enabled = false

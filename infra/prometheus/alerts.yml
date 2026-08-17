@@ -1,0 +1,133 @@
+# Alerts, ordered by how badly you want to be woken up.
+#
+# The first group is about *correctness* -- money being wrong. Those page
+# immediately. The second group is about liveness, where a few minutes of
+# degradation is tolerable because nothing becomes incorrect, only stale.
+
+groups:
+  - name: chainrail-correctness
+    rules:
+      - alert: LedgerIntegrityViolation
+        expr: chainrail_ledger_integrity_problems > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger integrity violation detected"
+          description: >-
+            verify_ledger_integrity found {{ $value }} problem(s): an unbalanced
+            transaction, cached-balance drift, or an illegal negative balance.
+            Every one of these should be impossible given the schema's triggers,
+            so this means a bad migration, a dropped trigger, or direct database
+            manipulation. Stop withdrawals and investigate before anything else.
+
+      - alert: CreditedDepositReversedByReorg
+        expr: increase(chainrail_reorg_credited_reversals_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A credited deposit was invalidated by a chain reorg"
+          description: >-
+            A reorg went deeper than the confirmation threshold and invalidated a
+            deposit whose funds were already spendable. A compensating entry has
+            been posted; if it created a user_deficit, real value was lost.
+            Review the confirmation policy for this chain.
+
+      - alert: UserDeficitBooked
+        expr: increase(chainrail_ledger_deficits_total[1h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A reorg reversal exceeded a user's spendable balance"
+          description: >-
+            A receivable was booked against a user because they had already
+            withdrawn reversed funds. This is a realised loss requiring a
+            business decision.
+
+  - name: chainrail-liveness
+    rules:
+      - alert: WatcherStalled
+        expr: chainrail_watcher_lag_blocks > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Watcher is {{ $value }} blocks behind on {{ $labels.chain }}"
+          description: >-
+            Deposits are not being detected. Nothing is incorrect -- the cursor
+            only advances on durable writes -- but users are waiting. Check RPC
+            health and the worker logs.
+
+      - alert: AllRpcEndpointsUnhealthy
+        expr: max by (chain) (chainrail_rpc_endpoint_healthy) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Every RPC endpoint for {{ $labels.chain }} has an open circuit breaker"
+          description: >-
+            No deposits can be detected and no withdrawals broadcast on this
+            chain. Add or fix an endpoint.
+
+      - alert: OutboxRelayWedged
+        expr: chainrail_outbox_oldest_pending_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest unpublished event is {{ $value | humanizeDuration }} old"
+          description: >-
+            The outbox relay is not draining. Business state is still correct and
+            durable -- that is the point of the outbox -- but downstream systems
+            are not being told about it.
+
+      - alert: DeadLettersAccumulating
+        expr: increase(chainrail_events_dead_lettered_total[15m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} events dead-lettered in 15 minutes"
+          description: >-
+            Events are failing permanently. Inspect the dead_letters table; the
+            `error` column carries the reason.
+
+      - alert: WithdrawalFailureRateHigh
+        expr: >-
+          sum(rate(chainrail_withdrawal_failures_total[10m]))
+          / clamp_min(sum(rate(chainrail_withdrawals_total[10m])), 0.001) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of withdrawals are failing"
+
+      - alert: RpcErrorRateHigh
+        expr: >-
+          sum by (chain) (rate(chainrail_rpc_failures_total[5m]))
+          / clamp_min(sum by (chain) (rate(chainrail_rpc_requests_total[5m])), 0.001) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RPC error rate above 25% on {{ $labels.chain }}"
+
+      - alert: KafkaConsumerLagGrowing
+        expr: chainrail_kafka_consumer_lag > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer {{ $labels.consumer }} is {{ $value }} messages behind"
+
+      - alert: DepositAddressPoolLow
+        expr: chainrail_deposit_address_pool_available < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deposit address pool for {{ $labels.chain }} is nearly empty"
+          description: >-
+            New users cannot be given a deposit address once the pool is dry.
+            Export more addresses from the custody system.
