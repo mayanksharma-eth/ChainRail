@@ -6,7 +6,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # Deliberately NOT setting `RUSTFLAGS: -D warnings` globally: RUSTFLAGS applies
+  # to dependencies too, so a new warning in an upstream crate would break CI for
+  # reasons unrelated to this repository. The explicit `clippy -- -D warnings`
+  # below scopes the strictness to our own code, which is what we actually want.
 
 jobs:
   check:
@@ -17,7 +20,10 @@ jobs:
         env:
           POSTGRES_USER: chainrail
           POSTGRES_PASSWORD: chainrail
-          POSTGRES_DB: chainrail
+          # Named `chainrail_test` on purpose: the integration harness TRUNCATEs
+          # every table between tests and asserts the target database is a
+          # dedicated test one, so it can never wipe an application database.
+          POSTGRES_DB: chainrail_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U chainrail"
@@ -28,14 +34,29 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # librdkafka builds from source.
-      - run: sudo apt-get update && sudo apt-get install -y cmake libsasl2-dev
+        continue-on-error: true
+
+      # librdkafka is built from source by rdkafka-sys. It needs cmake, and its
+      # OAUTHBEARER/OIDC support needs libcurl headers -- absent on the runner,
+      # though present in the Rust Docker image, which is why the container build
+      # passes without them.
+      - name: install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            libcurl4-openssl-dev \
+            libsasl2-dev \
+            libssl-dev \
+            pkg-config \
+            zlib1g-dev
+
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all
         env:
           APP_ENV: test
-          TEST_DATABASE_URL: postgres://chainrail:chainrail@127.0.0.1:5432/chainrail
+          TEST_DATABASE_URL: postgres://chainrail:chainrail@127.0.0.1:5432/chainrail_test
 
   docker:
     runs-on: ubuntu-latest

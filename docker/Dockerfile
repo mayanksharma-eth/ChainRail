@@ -6,11 +6,17 @@
 
 FROM rust:1-bookworm AS builder
 
-# librdkafka builds from source (cmake), and rustls needs no OpenSSL.
+# librdkafka is built from source by rdkafka-sys: cmake to build it, libcurl
+# headers for its OAUTHBEARER/OIDC support, libsasl2 for SASL. The Rust base
+# image happens to ship libcurl today, but declaring it explicitly means a
+# slimmer base image later cannot silently break the build. TLS is rustls, so
+# no OpenSSL runtime is needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
+        libcurl4-openssl-dev \
         libsasl2-dev \
         pkg-config \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
